@@ -10,7 +10,9 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "canvas": "^3.2.3",
     "dotenv": "^17.4.2",
-    "mineflayer": "^4.37.1"
+    "mineflayer": "^4.37.1",
+    "prismarine-viewer": "^1.33.0"
   }
 }

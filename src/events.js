@@ -1,6 +1,7 @@
 const log = require('./lib/logger')
 const config = require('./config')
 const { runLobbyTransfer } = require('./features/lobbyTransfer')
+const { startViewerIfEnabled, stopViewer } = require('./features/viewer')
 
 let suppressedParticleReadErrors = 0
 
@@ -18,6 +19,10 @@ function registerBotEvents(bot) {
     const pos = bot.entity?.position
     log.info(`Spawn ve svete: ${pos ? `${pos.x.toFixed(1)} ${pos.y.toFixed(1)} ${pos.z.toFixed(1)}` : 'pozice neznama'}`)
 
+    startViewerIfEnabled(bot).catch(err => {
+      log.error(`Auto viewer spadl: ${err.stack || err.message}`)
+    })
+
     if (config.lobbyTransfer.enabled) {
       runLobbyTransfer(bot).catch(err => {
         log.error(`Auto lobby transfer spadl: ${err.stack || err.message}`)
@@ -34,6 +39,7 @@ function registerBotEvents(bot) {
   })
 
   bot.on('end', (reason) => {
+    stopViewer(bot, { silent: true })
     log.warn(`Odpojeno: ${reason || 'bez duvodu'}`)
   })
 

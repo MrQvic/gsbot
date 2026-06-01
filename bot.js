@@ -4,6 +4,7 @@ const config = require('./src/config')
 const log = require('./src/lib/logger')
 const { createCommandRegistry } = require('./src/commands/registry')
 const { registerGeneralCommands } = require('./src/commands/general')
+const { registerViewerCommands } = require('./src/commands/viewer')
 const { registerBotEvents } = require('./src/events')
 const { startConsole } = require('./src/console')
 
@@ -13,6 +14,7 @@ registerBotEvents(bot)
 
 const registry = createCommandRegistry()
 registerGeneralCommands(registry, bot)
+registerViewerCommands(registry, bot)
 
 startConsole(registry, { bot })
 

@@ -63,5 +63,13 @@ module.exports = {
     windowTimeoutMs: envNumber('LOBBY_WINDOW_TIMEOUT_MS', 5000),
     menuClickDelayMs: envNumber('LOBBY_MENU_CLICK_DELAY_MS', 500),
     successTimeoutMs: envNumber('LOBBY_SUCCESS_TIMEOUT_MS', 4000)
+  },
+
+  viewer: {
+    enabled: envBoolean('VIEWER_ENABLED', false),
+    port: envNumber('VIEWER_PORT', 3000),
+    viewDistance: envNumber('VIEWER_VIEW_DISTANCE', 6),
+    firstPerson: envBoolean('VIEWER_FIRST_PERSON', false),
+    publicHost: process.env.VIEWER_PUBLIC_HOST || 'localhost'
   }
 }

@@ -24,6 +24,9 @@ Po spusteni lze psat prikazy do konzole:
 - `slot <0-8>` - vybrat hotbar slot
 - `held` - item v ruce
 - `use` - pouzit item v ruce
+- `viewer status` - stav weboveho vieweru
+- `viewer start [port]` - spusti Prismarine viewer (napr. http://localhost:3000)
+- `viewer stop` - zastavi viewer
 - `quit` - konec
 
 Konfigurace je v `.env`:
@@ -47,4 +50,10 @@ LOBBY_MENU_SLOT=11
 LOBBY_MOUSE_BUTTON=1
 LOBBY_CLICK_MODE=0
 LOBBY_SUCCESS_MESSAGE="+ TvojeJmeno"
+
+VIEWER_ENABLED=false # true = automaticky spustit po spawnu
+VIEWER_PORT=3000
+VIEWER_VIEW_DISTANCE=6
+VIEWER_FIRST_PERSON=false
+VIEWER_PUBLIC_HOST=localhost
 ```

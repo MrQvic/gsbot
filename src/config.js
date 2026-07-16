@@ -67,6 +67,7 @@ module.exports = {
   },
 
   mining: {
+    instantBlockDelayMs: Math.max(0, envNumber('MINING_INSTANT_BLOCK_DELAY_MS', 50)),
     nextBlockDelayMs: Math.max(0, envNumber('MINING_NEXT_BLOCK_DELAY_MS', 250)),
     traceEnabled: envBoolean('MINING_TRACE', false),
     traceFolder: process.env.MINING_TRACE_FOLDER || './logs'

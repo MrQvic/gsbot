@@ -13,7 +13,8 @@ const TRACED_OUT_PACKETS = new Set([
   'flying',
   'player_input',
   'held_item_slot',
-  'entity_action'
+  'entity_action',
+  'tick_end'
 ])
 
 const TRACED_IN_PACKETS = new Set([
@@ -95,8 +96,9 @@ function createMiningTrace(bot, options = {}) {
   if (typeof bot._client?.write === 'function') {
     originalWrite = bot._client.write
     tracedWrite = function (name, params) {
+      const result = originalWrite.call(this, name, params)
       if (TRACED_OUT_PACKETS.has(name)) record('packet_out', { packet: name, data: params })
-      return originalWrite.call(this, name, params)
+      return result
     }
     bot._client.write = tracedWrite
 

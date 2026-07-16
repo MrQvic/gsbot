@@ -3,6 +3,7 @@ const { performance } = require('perf_hooks')
 const config = require('../config')
 const log = require('../lib/logger')
 const { sleep } = require('../lib/wait')
+const { CLIENT_TICK_MS, startClientTickEnd, stopClientTickEnd } = require('./clientTickEnd')
 const { createMiningTrace } = require('./miningTrace')
 
 const MAX_REACH = 5.1
@@ -15,6 +16,9 @@ function getState(bot) {
       running: false,
       loopPromise: null,
       currentTarget: null,
+      activeDig: null,
+      retainedDig: null,
+      originalStopDigging: null,
       lockedDirection: null,
       lockedYaw: null,
       lockedPitch: null,
@@ -185,19 +189,67 @@ function abortForCloserBlock(bot, state, oldBlock, newBlock) {
     })
   }
 
-  const active = bot.targetDigBlock
+  const retained = state.retainedDig
+  if (
+    retained &&
+    oldBlock?.type === retained.type &&
+    oldBlock.position.equals(retained.position) &&
+    (!newBlock || newBlock.type === 0 || newBlock.type !== retained.type)
+  ) {
+    traceRecord(state, 'dig_progress_discarded', {
+      reason: 'retained_block_changed',
+      target: blockSnapshot(bot, oldBlock),
+      remainingDigTicks: retained.ticksRemaining
+    })
+    state.retainedDig = null
+  }
+
+  const activeControl = state.activeDig
+  const active = activeControl?.block
   if (!state.running || !state.currentTarget || !active) return
 
-  // Let Mineflayer finish its own dig when the active block becomes air.
+  // Let the active dig resolve when its block becomes air.
   if (newBlock?.type === 0 && samePosition(active, newBlock)) return
 
   const cursorBlock = getCursorBlock(bot, state.lockedDirection)
   if (samePosition(active, cursorBlock)) return
 
+  // Vanilla keeps the current target and progress when the blocking target breaks on its initial hit.
+  let progressRetained = false
+  if (cursorBlock && cursorBlock.type !== 0 && bot.canDigBlock(cursorBlock)) {
+    try {
+      progressRetained = getPlannedDigTime(bot, cursorBlock) === 0
+    } catch (_) {}
+  }
+
+  activeControl.abortFace = cursorBlock?.face ?? activeControl.face
+  if (progressRetained) {
+    state.retainedDig = {
+      position: active.position.clone(),
+      type: active.type,
+      stateId: active.stateId,
+      face: activeControl.face,
+      plannedDigTimeMs: activeControl.plannedDigTimeMs,
+      ticksRemaining: activeControl.ticksRemaining,
+      heldItemType: bot.heldItem?.type || null,
+      skipAbortOnce: true
+    }
+    traceRecord(state, 'dig_progress_retained', {
+      target: blockSnapshot(bot, active),
+      blocker: blockSnapshot(bot, cursorBlock),
+      plannedDigTimeMs: activeControl.plannedDigTimeMs,
+      remainingDigTicks: activeControl.ticksRemaining,
+      remainingDigTimeMs: activeControl.ticksRemaining * CLIENT_TICK_MS
+    })
+  } else {
+    state.retainedDig = null
+  }
+
   state.retargets++
   traceRecord(state, 'retarget', {
     active: blockSnapshot(bot, active),
     nextTarget: blockSnapshot(bot, cursorBlock),
+    progressRetained,
     update: {
       oldBlock: blockSnapshot(bot, oldBlock),
       newBlock: blockSnapshot(bot, newBlock)
@@ -279,6 +331,24 @@ function temporarilyNormalizeItemEnchantments(item, registry) {
   }
 }
 
+function temporarilyNormalizeBlockMaterial(block, heldItem, registry) {
+  const heldItemType = heldItem?.type
+  const materialToolMultipliers = registry.materials[block?.material]
+  if (!heldItemType || materialToolMultipliers?.[heldItemType]) return null
+  if (!block.harvestTools?.[heldItemType]) return null
+
+  const toolType = heldItem.name?.split('_').pop()
+  const fallbackMaterial = `mineable/${toolType}`
+  if (!registry.materials[fallbackMaterial]?.[heldItemType]) return null
+
+  const originalMaterial = block.material
+  block.material = fallbackMaterial
+
+  return () => {
+    block.material = originalMaterial
+  }
+}
+
 function getDigFaceVector(block) {
   const faces = {
     0: [0, -1, 0],
@@ -293,21 +363,188 @@ function getDigFaceVector(block) {
   return block.position.clone().set(...coordinates)
 }
 
-function digWithNormalizedEnchantments(bot, state, block, attempt) {
+function temporarilyNormalizeDigData(bot, block) {
   const headSlot = bot.getEquipmentDestSlot?.('head')
   const helmet = headSlot === undefined ? null : bot.inventory?.slots?.[headSlot]
   const items = new Set([bot.heldItem, helmet].filter(Boolean))
-  const restore = [...items]
-    .map(item => temporarilyNormalizeItemEnchantments(item, bot.registry))
-    .filter(Boolean)
+  const restore = [
+    temporarilyNormalizeBlockMaterial(block, bot.heldItem, bot.registry),
+    ...[...items].map(item => temporarilyNormalizeItemEnchantments(item, bot.registry))
+  ].filter(Boolean)
+
+  return () => {
+    for (const restoreItem of restore.reverse()) restoreItem()
+  }
+}
+
+function getPlannedDigTime(bot, block) {
+  const restore = temporarilyNormalizeDigData(bot, block)
+  try {
+    return bot.digTime(block)
+  } finally {
+    restore()
+  }
+}
+
+function sameRetainedTarget(retained, block, heldItem) {
+  return Boolean(
+    retained &&
+    block?.position?.equals(retained.position) &&
+    block.type === retained.type &&
+    heldItem?.type === retained.heldItemType
+  )
+}
+
+function startTimedDig(bot, state, block, plannedDigTimeMs, ticksRemaining, sendStart) {
+  let resolvePromise
+  let rejectPromise
+  let settled = false
+  const promise = new Promise((resolve, reject) => {
+    resolvePromise = resolve
+    rejectPromise = reject
+  })
+  const eventName = `blockUpdate:${block.position}`
+  const control = {
+    block,
+    face: block.face,
+    abortFace: block.face,
+    plannedDigTimeMs,
+    ticksRemaining,
+    ticksElapsed: 0,
+    finish: null,
+    fail: null
+  }
+
+  function cleanup() {
+    bot.removeListener(eventName, onBlockUpdate)
+    if (state.activeDig === control) state.activeDig = null
+    if (samePosition(bot.targetDigBlock, block)) {
+      bot.targetDigBlock = null
+      bot.targetDigFace = null
+    }
+    if (bot.stopDigging === stop) bot.stopDigging = state.originalStopDigging
+  }
+
+  function complete(sendFinish) {
+    if (settled) return
+    settled = true
+
+    try {
+      if (sendFinish) {
+        bot._client.write('block_dig', {
+          status: 2,
+          location: block.position,
+          face: control.face
+        })
+      }
+      cleanup()
+      bot.lastDigTime = performance.now()
+      if (sendFinish) bot._updateBlockState(block.position, 0)
+      resolvePromise()
+    } catch (err) {
+      cleanup()
+      rejectPromise(err)
+    }
+  }
+
+  function fail(err) {
+    if (settled) return
+    settled = true
+    cleanup()
+    rejectPromise(err)
+  }
+
+  function stop() {
+    if (settled) return
+    settled = true
+    let error = new Error('Digging aborted')
+
+    try {
+      bot._client.write('block_dig', {
+        status: 1,
+        location: block.position,
+        face: control.abortFace
+      })
+    } catch (err) {
+      error = err
+    }
+
+    cleanup()
+    bot.lastDigTime = performance.now()
+    rejectPromise(error)
+  }
+
+  function onBlockUpdate(oldBlock, newBlock) {
+    if (newBlock?.type === 0) complete(false)
+  }
+
+  control.finish = () => complete(true)
+  control.fail = fail
+  state.activeDig = control
+  bot.targetDigBlock = block
+  bot.targetDigFace = block.face
+  bot.stopDigging = stop
+  bot.on(eventName, onBlockUpdate)
+
+  try {
+    if (sendStart) {
+      bot._client.write('block_dig', {
+        status: 0,
+        location: block.position,
+        face: block.face
+      })
+    }
+    bot.swingArm()
+  } catch (err) {
+    settled = true
+    cleanup()
+    rejectPromise(err)
+  }
+
+  return promise
+}
+
+function advanceActiveDig(bot, state) {
+  const active = state.activeDig
+  if (!state.running || !active) return
+
+  try {
+    active.ticksRemaining--
+    active.ticksElapsed++
+    if (active.ticksElapsed % 7 === 0) bot.swingArm()
+    if (active.ticksRemaining <= 0) active.finish()
+  } catch (err) {
+    active.fail(err)
+  }
+}
+
+function digWithNormalizedEnchantments(bot, state, block, attempt) {
+  const restore = temporarilyNormalizeDigData(bot, block)
 
   try {
     const digFace = getDigFaceVector(block)
+    const plannedDigTimeMs = bot.digTime(block)
+    if (plannedDigTimeMs === Infinity) {
+      throw new Error(`dig time for ${block.name} is Infinity`)
+    }
+
+    const retained = state.retainedDig
+    const resumed = sameRetainedTarget(retained, block, bot.heldItem)
+    const fullDigTicks = plannedDigTimeMs === 0
+      ? 1
+      : Math.max(1, Math.ceil(plannedDigTimeMs / CLIENT_TICK_MS))
+    const remainingDigTicks = resumed
+      ? Math.min(retained.ticksRemaining, fullDigTicks)
+      : fullDigTicks
+
     traceRecord(state, 'dig_start', {
       attempt,
       target: blockSnapshot(bot, block),
       digFace: typeof digFace === 'string' ? digFace : vectorSnapshot(digFace),
-      plannedDigTimeMs: number(bot.digTime(block)),
+      plannedDigTimeMs: number(plannedDigTimeMs),
+      resumed,
+      remainingDigTicks,
+      remainingDigTimeMs: remainingDigTicks * CLIENT_TICK_MS,
       heldItem: itemSnapshot(bot.heldItem, bot.registry),
       player: {
         position: vectorSnapshot(bot.entity?.position),
@@ -317,10 +554,67 @@ function digWithNormalizedEnchantments(bot, state, block, attempt) {
       }
     })
 
-    // Mineflayer reads enchantments synchronously before bot.dig() returns its promise.
-    return bot.dig(block, true, digFace)
+    if (retained && !resumed) {
+      if (retained.skipAbortOnce) {
+        retained.skipAbortOnce = false
+      } else {
+        bot._client.write('block_dig', {
+          status: 1,
+          location: retained.position,
+          face: block.face
+        })
+      }
+
+      if (plannedDigTimeMs !== 0) {
+        traceRecord(state, 'dig_progress_discarded', {
+          reason: 'non_instant_retarget',
+          target: {
+            name: bot.registry.blocks[retained.type]?.name || null,
+            type: retained.type,
+            stateId: retained.stateId,
+            position: vectorSnapshot(retained.position)
+          },
+          nextTarget: blockSnapshot(bot, block),
+          remainingDigTicks: retained.ticksRemaining
+        })
+        state.retainedDig = null
+      }
+    }
+
+    if (resumed) {
+      state.retainedDig = null
+      return {
+        promise: startTimedDig(
+          bot,
+          state,
+          block,
+          retained.plannedDigTimeMs,
+          remainingDigTicks,
+          false
+        ),
+        plannedDigTimeMs: retained.plannedDigTimeMs
+      }
+    }
+
+    // Vanilla only sends START when the initial hit destroys the block instantly.
+    if (plannedDigTimeMs === 0) {
+      bot._client.write('block_dig', {
+        status: 0,
+        location: block.position,
+        face: block.face
+      })
+      bot.swingArm()
+      bot.lastDigTime = performance.now()
+      bot._updateBlockState(block.position, 0)
+      return { promise: Promise.resolve(), plannedDigTimeMs }
+    }
+
+    return {
+      promise: startTimedDig(bot, state, block, plannedDigTimeMs, fullDigTicks, true),
+      plannedDigTimeMs
+    }
   } finally {
-    for (const restoreItem of restore.reverse()) restoreItem()
+    restore()
   }
 }
 
@@ -357,7 +651,8 @@ async function runMiningLoop(bot, state) {
     })
 
     try {
-      await digWithNormalizedEnchantments(bot, state, block, attempt)
+      const dig = digWithNormalizedEnchantments(bot, state, block, attempt)
+      await dig.promise
       const durationMs = number(performance.now() - attemptStartedAt)
       traceRecord(state, 'dig_complete', {
         attempt,
@@ -367,12 +662,18 @@ async function runMiningLoop(bot, state) {
 
       if (state.running) {
         state.completed++
-        if (config.mining.nextBlockDelayMs > 0) {
+        const instant = dig.plannedDigTimeMs === 0
+        const delayMs = instant
+          ? config.mining.instantBlockDelayMs
+          : config.mining.nextBlockDelayMs
+
+        if (delayMs > 0) {
           traceRecord(state, 'post_break_delay', {
             attempt,
-            delayMs: config.mining.nextBlockDelayMs
+            delayMs,
+            instant
           })
-          await sleep(config.mining.nextBlockDelayMs)
+          await sleep(delayMs)
         }
       }
     } catch (err) {
@@ -427,6 +728,9 @@ function startContinuousMining(bot) {
 
   state.running = true
   state.currentTarget = null
+  state.activeDig = null
+  state.retainedDig = null
+  state.originalStopDigging = bot.stopDigging
   state.lockedDirection = lockedDirection
   state.lockedYaw = bot.entity.yaw
   state.lockedPitch = bot.entity.pitch
@@ -475,6 +779,7 @@ function startContinuousMining(bot) {
       effects: bot.entity.effects,
       settings: {
         maxReach: MAX_REACH,
+        instantBlockDelayMs: config.mining.instantBlockDelayMs,
         nextBlockDelayMs: config.mining.nextBlockDelayMs,
         lookAtSuppressed: true
       }
@@ -482,6 +787,7 @@ function startContinuousMining(bot) {
     log.info(`Mining trace: ${state.traceFile}`)
   }
 
+  startClientTickEnd(bot, () => advanceActiveDig(bot, state))
   suppressLookAt(bot, state)
   attachListeners(bot, state)
 
@@ -495,8 +801,13 @@ function startContinuousMining(bot) {
       log.error(`Prubezna tezba spadla: ${err.stack || err.message}`)
     })
     .finally(() => {
+      stopClientTickEnd(bot)
       state.running = false
       state.currentTarget = null
+      state.activeDig = null
+      state.retainedDig = null
+      if (state.originalStopDigging) bot.stopDigging = state.originalStopDigging
+      state.originalStopDigging = null
       state.lockedDirection = null
       state.lockedYaw = null
       state.lockedPitch = null
@@ -532,11 +843,11 @@ async function stopContinuousMining(bot, options = {}) {
   state.stopReason = options.reason || 'command'
   traceRecord(state, 'stop_requested', { reason: state.stopReason })
   state.running = false
+  state.retainedDig = null
+  stopClientTickEnd(bot)
   signalUpdate(state)
 
-  if (state.currentTarget && samePosition(state.currentTarget, bot.targetDigBlock)) {
-    bot.stopDigging()
-  }
+  if (state.activeDig) bot.stopDigging()
 
   if (state.loopPromise) await state.loopPromise
   log.info('Prubezna tezba zastavena.')
@@ -552,6 +863,7 @@ function getContinuousMiningStatus(bot) {
   return {
     running: state.running,
     heldItem: bot.heldItem?.name || null,
+    instantBlockDelayMs: config.mining.instantBlockDelayMs,
     nextBlockDelayMs: config.mining.nextBlockDelayMs,
     traceEnabled: config.mining.traceEnabled,
     traceActive: Boolean(state.trace?.active),
@@ -578,6 +890,14 @@ function getContinuousMiningStatus(bot) {
       ? {
           name: state.currentTarget.name,
           position: state.currentTarget.position.clone()
+        }
+      : null,
+    activeDigRemainingTicks: state.activeDig?.ticksRemaining ?? null,
+    retainedDig: state.retainedDig
+      ? {
+          name: bot.registry.blocks[state.retainedDig.type]?.name || null,
+          position: state.retainedDig.position.clone(),
+          remainingTicks: state.retainedDig.ticksRemaining
         }
       : null,
     startedAt: state.startedAt,

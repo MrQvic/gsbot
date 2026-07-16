@@ -7,9 +7,11 @@ const { registerGeneralCommands } = require('./src/commands/general')
 const { registerMiningCommands } = require('./src/commands/mining')
 const { registerViewerCommands } = require('./src/commands/viewer')
 const { registerBotEvents } = require('./src/events')
+const { injectInteractionSequence } = require('./src/features/interactionSequence')
 const { startConsole } = require('./src/console')
 
 const bot = mineflayer.createBot(config.connection)
+bot.loadPlugin(injectInteractionSequence)
 
 registerBotEvents(bot)
 

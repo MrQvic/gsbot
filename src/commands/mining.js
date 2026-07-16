@@ -18,6 +18,7 @@ function formatStatus(status) {
   return [
     `running=${status.running ? 'true' : 'false'}`,
     `held=${status.heldItem || 'nothing'}`,
+    `instantBlockDelayMs=${status.instantBlockDelayMs}`,
     `nextBlockDelayMs=${status.nextBlockDelayMs}`,
     `traceEnabled=${status.traceEnabled ? 'true' : 'false'}`,
     `traceActive=${status.traceActive ? 'true' : 'false'}`,

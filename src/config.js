@@ -29,6 +29,7 @@ module.exports = {
     profilesFolder: process.env.MC_PROFILES_FOLDER || './aut_cache',
 
     version: envVersion('MC_VERSION', '1.21.11'),
+    checkTimeoutInterval: envNumber('MC_KEEPALIVE_TIMEOUT_MS', 60000),
 
     // Dulezite: protodef jinak umi primo pres console.log spamovat PartialReadError
     // u packet_world_particles jeste predtim, nez se chyba dostane do naseho loggeru.
@@ -63,6 +64,12 @@ module.exports = {
     windowTimeoutMs: envNumber('LOBBY_WINDOW_TIMEOUT_MS', 5000),
     menuClickDelayMs: envNumber('LOBBY_MENU_CLICK_DELAY_MS', 500),
     successTimeoutMs: envNumber('LOBBY_SUCCESS_TIMEOUT_MS', 4000)
+  },
+
+  mining: {
+    nextBlockDelayMs: Math.max(0, envNumber('MINING_NEXT_BLOCK_DELAY_MS', 250)),
+    traceEnabled: envBoolean('MINING_TRACE', false),
+    traceFolder: process.env.MINING_TRACE_FOLDER || './logs'
   },
 
   viewer: {

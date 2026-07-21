@@ -32,7 +32,7 @@ Suggested comment:
 >
 > That is approximately 19.96 `tick_end` packets/s. The mining actions are processed before the corresponding `tick_end` packet.
 >
-> One implementation caveat: blindly running the interval through a proxy/backend handoff caused a decoder error in this setup. Scoping it to the active PLAY/tick lifecycle (rather than an unconditional connection-wide interval) avoided that problem.
+> One implementation caveat: blindly running the original interval through a proxy/backend handoff caused a decoder error in this setup. The current local implementation is scoped to active mining, advances from Mineflayer's `physicsTick`, separates synchronous catch-up movement packets, and tears down without a final packet when a clientbound world-change/`respawn` packet arrives. The successful live traces above predate this scheduler refactor; the new ordering currently has deterministic packet-level test coverage and still needs a fresh live trace.
 
 Supporting local traces (do not upload without sanitizing):
 

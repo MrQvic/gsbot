@@ -42,7 +42,8 @@ function getState(bot) {
       onBlockUpdate: null,
       onDeath: null,
       onKicked: null,
-      onEnd: null
+      onEnd: null,
+      onRespawn: null
     })
   }
 
@@ -264,7 +265,11 @@ function attachListeners(bot, state) {
   }
   state.onDeath = () => {
     traceRecord(state, 'death')
-    stopContinuousMining(bot, { reason: 'death' }).catch(err => {
+    stopContinuousMining(bot, {
+      reason: 'death',
+      sendAbort: false,
+      flushTickEnd: false
+    }).catch(err => {
       log.error(`Zastaveni tezby po smrti selhalo: ${err.stack || err.message}`)
     })
   }
@@ -273,8 +278,26 @@ function attachListeners(bot, state) {
   }
   state.onEnd = reason => {
     traceRecord(state, 'connection_end', { reason })
-    stopContinuousMining(bot, { reason: `connection_end:${reason || 'unknown'}` }).catch(err => {
+    stopContinuousMining(bot, {
+      reason: `connection_end:${reason || 'unknown'}`,
+      sendAbort: false,
+      flushTickEnd: false
+    }).catch(err => {
       log.error(`Zastaveni tezby po odpojeni selhalo: ${err.stack || err.message}`)
+    })
+  }
+  state.onRespawn = packet => {
+    const worldState = packet.worldState || packet
+    traceRecord(state, 'world_change', {
+      worldName: worldState.name || worldState.worldName || null,
+      dimension: worldState.dimension || worldState.dimensionType || null
+    })
+    stopContinuousMining(bot, {
+      reason: 'world_change',
+      sendAbort: false,
+      flushTickEnd: false
+    }).catch(err => {
+      log.error(`Zastaveni tezby po zmene sveta selhalo: ${err.stack || err.message}`)
     })
   }
 
@@ -282,6 +305,7 @@ function attachListeners(bot, state) {
   bot.once('death', state.onDeath)
   bot.once('kicked', state.onKicked)
   bot.once('end', state.onEnd)
+  bot._client.on('respawn', state.onRespawn)
 }
 
 function detachListeners(bot, state) {
@@ -289,11 +313,13 @@ function detachListeners(bot, state) {
   if (state.onDeath) bot.removeListener('death', state.onDeath)
   if (state.onKicked) bot.removeListener('kicked', state.onKicked)
   if (state.onEnd) bot.removeListener('end', state.onEnd)
+  if (state.onRespawn) bot._client.removeListener('respawn', state.onRespawn)
 
   state.onBlockUpdate = null
   state.onDeath = null
   state.onKicked = null
   state.onEnd = null
+  state.onRespawn = null
 }
 
 function isExpectedDigInterruption(err) {
@@ -840,14 +866,25 @@ async function stopContinuousMining(bot, options = {}) {
     return { ok: false, message: 'Tezba nebezi.', status: getContinuousMiningStatus(bot) }
   }
 
+  if (!state.running && state.loopPromise) {
+    await state.loopPromise
+    return { ok: true, already: true, status: getContinuousMiningStatus(bot) }
+  }
+
   state.stopReason = options.reason || 'command'
   traceRecord(state, 'stop_requested', { reason: state.stopReason })
   state.running = false
   state.retainedDig = null
-  stopClientTickEnd(bot)
   signalUpdate(state)
 
-  if (state.activeDig) bot.stopDigging()
+  const sendAbort = options.sendAbort !== false
+  const flushTickEnd = options.flushTickEnd ?? sendAbort
+  if (state.activeDig) {
+    if (sendAbort) bot.stopDigging()
+    else state.activeDig.fail(new Error('Digging aborted by lifecycle change'))
+  }
+
+  stopClientTickEnd(bot, { flush: flushTickEnd })
 
   if (state.loopPromise) await state.loopPromise
   log.info('Prubezna tezba zastavena.')

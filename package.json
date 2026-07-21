@@ -4,7 +4,8 @@
   "description": "Mineflayer bot",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js"
+    "start": "node bot.js",
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",

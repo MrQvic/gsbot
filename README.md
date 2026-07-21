@@ -24,6 +24,12 @@ MC_USERNAME=tvuj@email.cz
 npm start
 ```
 
+Lokalni packet-order testy:
+
+```bash
+npm test
+```
+
 ## Konzolove prikazy
 
 - `help` - vypis prikazu

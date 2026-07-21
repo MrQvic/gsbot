@@ -50,11 +50,15 @@ It does not send STOP. Non-instant targets use START and later STOP.
 
 ### Client tick boundaries
 
-`src/features/clientTickEnd.js` runs the mining tick and then sends `tick_end` every 50 ms on protocol 1.21.2+.
+`src/features/clientTickEnd.js` advances mining from Mineflayer's real `physicsTick` and sends `tick_end` on protocol 1.21.2+ after the synchronous physics/movement packet batch completes.
 
-The timer only runs during active continuous mining. An earlier connection-wide attempt sent it through a proxy/backend handoff and caused a decoder error. Mining-only lifecycle handling avoids that problem.
+Mineflayer can run multiple catch-up physics ticks in one timer callback. The implementation closes the previous client tick before the next catch-up iteration and also guards outgoing movement packets so two of them cannot share one `tick_end` boundary.
+
+The hook only runs during active continuous mining. Manual stop sends ABORT and flushes the final boundary. Death, disconnect, or a clientbound `respawn`/world-change packet tears mining down locally without sending stale ABORT/`tick_end` packets through a proxy/backend handoff.
 
 Without `tick_end`, controlled runs were kicked after approximately 45–46 `block_dig` packets. Final successful traces sent approximately 19.96 `tick_end` packets/s.
+
+Those live traces validated the earlier 50 ms interval implementation. The synchronized `physicsTick` implementation is covered by packet-order tests but still needs a fresh live Vulcan trace.
 
 ## Correct dig-time calculation
 
@@ -115,7 +119,7 @@ START instant blocker
 STOP original after the remaining active mining ticks
 ```
 
-Non-instant digging progress is advanced on the same 50 ms callback that precedes `tick_end`. Retained state is discarded if the original block changes/disappears, the held tool no longer matches, mining stops, the player dies, or the world changes.
+Non-instant digging progress is advanced on `physicsTick` before its movement packet and closing `tick_end`. Retained state is discarded if the original block changes/disappears, the held tool no longer matches, mining stops, the player dies, or a clientbound world-change/`respawn` packet arrives.
 
 Relevant trace fields:
 
@@ -166,6 +170,7 @@ They cover Mineflayer issues #3800, #3627, #2208, #3921, prismarine-block PR #12
 ## Validation commands
 
 ```bash
+npm test
 node --check bot.js
 find src -name '*.js' -print0 | xargs -0 -n1 node --check
 git diff --check

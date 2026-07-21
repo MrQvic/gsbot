@@ -11,6 +11,8 @@ function isParticleReadError(err) {
 }
 
 function registerBotEvents(bot) {
+  let lobbyTransferPromise = null
+
   bot.once('login', () => {
     log.info(`Prihlasen jako ${bot.username}`)
   })
@@ -24,9 +26,15 @@ function registerBotEvents(bot) {
     })
 
     if (config.lobbyTransfer.enabled) {
-      runLobbyTransfer(bot).catch(err => {
-        log.error(`Auto lobby transfer spadl: ${err.stack || err.message}`)
-      })
+      if (!lobbyTransferPromise) {
+        lobbyTransferPromise = runLobbyTransfer(bot)
+          .catch(err => {
+            log.error(`Auto lobby transfer spadl: ${err.stack || err.message}`)
+          })
+          .finally(() => {
+            lobbyTransferPromise = null
+          })
+      }
     }
   })
 

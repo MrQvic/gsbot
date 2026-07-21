@@ -9,17 +9,23 @@ const { registerViewerCommands } = require('./src/commands/viewer')
 const { registerBotEvents } = require('./src/events')
 const { injectInteractionSequence } = require('./src/features/interactionSequence')
 const { startConsole } = require('./src/console')
+const { createBotController } = require('./src/botController')
 
-const bot = mineflayer.createBot(config.connection)
-bot.loadPlugin(injectInteractionSequence)
-
-registerBotEvents(bot)
+const controller = createBotController({
+  createBot: () => mineflayer.createBot(config.connection),
+  prepareBot: bot => {
+    bot.loadPlugin(injectInteractionSequence)
+    registerBotEvents(bot)
+  },
+  reconnect: config.reconnect,
+  connectionLabel: `${config.connection.host}:${config.connection.port}`,
+  log
+})
 
 const registry = createCommandRegistry()
-registerGeneralCommands(registry, bot)
-registerMiningCommands(registry, bot)
-registerViewerCommands(registry, bot)
+registerGeneralCommands(registry, controller)
+registerMiningCommands(registry, controller)
+registerViewerCommands(registry, controller)
 
-startConsole(registry, { bot })
-
-log.info(`Pripojuju se na ${config.connection.host}:${config.connection.port}...`)
+startConsole(registry, { controller })
+controller.start()

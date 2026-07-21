@@ -28,7 +28,7 @@ function parsePort(raw) {
   return { ok: true, port }
 }
 
-function registerViewerCommands(registry, bot) {
+function registerViewerCommands(registry, controller) {
   registry.register({
     name: 'viewer',
     aliases: ['view', 'map'],
@@ -36,6 +36,8 @@ function registerViewerCommands(registry, bot) {
     usage: 'viewer <start|stop|status> [port]',
     run: async ({ args, reply }) => {
       const action = (args[0] || 'status').toLowerCase()
+      const bot = controller.getBot()
+      if (!bot) return reply(`Bot neni pripojeny (stav=${controller.getStatus().state}).`)
 
       if (['status', 'info'].includes(action)) {
         return reply(formatStatus(getViewerStatus(bot)))

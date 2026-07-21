@@ -7,6 +7,7 @@ Kontext pro dalsi praci na tomhle Mineflayer botovi.
 - Node.js Mineflayer bot pro Minecraft server.
 - Vstup prikazu je zatim pres terminal/konzoli, pozdeji muze pribyt Discord.
 - Bot po pripojeni/spawnu resi prepojeni z lobby pres nether star menu.
+- Po neocekavanem odpojeni vytvori novou Mineflayer instanci a reconnect opakuje s konfigurovanym backoffem.
 - Autorepair ani jine stare JsMacros funkce sem nepatri, pokud si o ne uzivatel explicitne nerekne.
 
 ## Dulezite zasady
@@ -47,6 +48,9 @@ MC_PROFILES_FOLDER=./aut_cache
 MC_VERSION=1.21.11
 MC_HIDE_PROTOCOL_ERRORS=true
 
+RECONNECT_AUTO=true
+RECONNECT_DELAYS_MS=60000,300000,900000,1800000,3600000
+
 LOBBY_AUTO=true
 LOBBY_REMOTE_ADDRESS=185.180.2.13
 LOBBY_Y=112
@@ -63,6 +67,7 @@ LOBBY_SUCCESS_MESSAGE=+ TvojeJmeno
 
 ```text
 bot.js                         hlavni entrypoint
+src/botController.js          vlastni aktualni bot instanci a reconnect lifecycle
 src/config.js                  env konfigurace
 src/events.js                  mineflayer eventy
 src/console.js                 readline konzole
@@ -101,6 +106,15 @@ Flow:
 7. Klikne konfigurovany slot.
 8. Volitelne ceka na potvrzovaci zpravu `LOBBY_SUCCESS_MESSAGE`.
 
+## Reconnect
+
+`src/botController.js` vytvari novou Mineflayer instanci po neocekavanem `end`.
+
+- Vychozi prodlevy jsou 1, 5, 15, 30 a 60 minut.
+- Posledni prodleva se opakuje, dokud se bot uspesne nespawne.
+- `quit` a `CTRL+C` cekajici reconnect zrusi.
+- Po reconnectu se znovu spusti lobby transfer, ale tezba se zatim automaticky neobnovuje.
+
 ## Znamy protocol warning/error
 
 Server jede na 1.21.11. Mineflayer/minecraft-protocol/protodef muze spamovat `PartialReadError` u `packet_world_particles`.
@@ -133,7 +147,7 @@ Druhy prikaz by nemel vypsat nic.
 ## Styl prace
 
 - CommonJS `require/module.exports`, ne ESM.
-- Bez zbytecnych automatickych akci po loginu/spawnu krom lobby transferu.
+- Bez zbytecnych automatickych akci po loginu/spawnu krom lobby transferu a explicitne nakonfigurovaneho reconnectu.
 - Novou funkcionalitu davat do `src/features/` nebo `src/commands/` podle typu.
 - Pri upravach nejdriv zkontrolovat syntaxi:
 

@@ -23,6 +23,7 @@ function startConsole(registry, context = {}) {
 
   rl.on('SIGINT', () => {
     log.info('CTRL+C: ukoncuju...')
+    context.controller?.shutdown?.('SIGINT')
     context.bot?.quit?.('SIGINT')
     process.exit(0)
   })

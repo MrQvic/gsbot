@@ -40,7 +40,7 @@ function formatStatus(status) {
   ].join('\n')
 }
 
-function registerMiningCommands(registry, bot) {
+function registerMiningCommands(registry, controller) {
   registry.register({
     name: 'mine',
     aliases: ['mining'],
@@ -48,6 +48,8 @@ function registerMiningCommands(registry, bot) {
     usage: 'mine <start|stop|status>',
     run: async ({ args, reply }) => {
       const action = (args[0] || 'status').toLowerCase()
+      const bot = controller.getBot()
+      if (!bot) return reply(`Bot neni pripojeny (stav=${controller.getStatus().state}).`)
 
       if (['status', 'info'].includes(action)) {
         return reply(formatStatus(getContinuousMiningStatus(bot)))

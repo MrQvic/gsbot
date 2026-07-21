@@ -51,6 +51,17 @@ npm test
 
 Bot sam od sebe neposila zpravy do Minecraft chatu. Chat pouziva pouze explicitni konzolovy prikaz `say <text>`.
 
+## Automaticky reconnect
+
+Po neocekavanem odpojeni bot vytvori novou Mineflayer instanci a zkusi se znovu pripojit. Vychozi prodlevy jsou 1, 5, 15, 30 a 60 minut; posledni hodinova prodleva se potom opakuje, dokud se bot uspesne nespawne. Prikaz `quit` a `CTRL+C` cekajici reconnect zrusi.
+
+```env
+RECONNECT_AUTO=true
+RECONNECT_DELAYS_MS=60000,300000,900000,1800000,3600000
+```
+
+Po reconnectu se znovu spusti bezny lobby transfer. Tezba se v teto prvni verzi automaticky neobnovuje.
+
 ## Continuous mining
 
 Bot musi mit pri `mine start` v ruce krumpac. Smer pohledu se po dobu tezby zamkne.

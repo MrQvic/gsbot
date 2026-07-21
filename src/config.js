@@ -20,6 +20,18 @@ function envVersion(name, fallback) {
   return raw
 }
 
+function envNumberList(name, fallback) {
+  const raw = process.env[name]
+  if (raw === undefined || raw === '') return fallback
+
+  const values = String(raw)
+    .split(',')
+    .map(value => Number(value.trim()))
+    .filter(value => Number.isFinite(value) && value >= 0)
+
+  return values.length > 0 ? values : fallback
+}
+
 module.exports = {
   connection: {
     host: process.env.MC_HOST || 'mc.goldskyblock.cz',
@@ -37,6 +49,11 @@ module.exports = {
 
     // Vlastni error logging mame v src/events.js, at mineflayer neloguje duplicitni stack traces.
     logErrors: false
+  },
+
+  reconnect: {
+    enabled: envBoolean('RECONNECT_AUTO', true),
+    delaysMs: envNumberList('RECONNECT_DELAYS_MS', [60000, 300000, 900000, 1800000, 3600000])
   },
 
   lobbyTransfer: {
